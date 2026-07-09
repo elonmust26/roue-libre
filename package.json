@@ -1,0 +1,47 @@
+{
+  "name": "roue-libre",
+  "version": "0.1.0",
+  "description": "Orchestrateur local multi-Claude Code : Prompteur / Coder / Testeur-Merge, piloté par gates objectives, avec dashboard temps réel.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "roue": "bin/roue.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "gates",
+    "templates",
+    "dashboard/dist",
+    "roue.config.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run build:dashboard",
+    "build:server": "tsc -p tsconfig.json",
+    "build:dashboard": "vite build dashboard",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev:dashboard": "vite dashboard"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

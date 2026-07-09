@@ -1,0 +1,25 @@
+{
+  "port": 4700,
+  "max_iterations": 3,
+  "timeout_minutes": 10,
+  "budget_usd": 5.0,
+  "default_risk": "medium",
+  "roles": {
+    "prompteur": {
+      "model": "claude-fable-5",
+      "allowedTools": ["Read", "Glob", "Grep"]
+    },
+    "coder": {
+      "model": "claude-fable-5",
+      "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(npm run:*)", "Bash(npm test:*)"]
+    },
+    "testeur": {
+      "model": "claude-fable-5",
+      "allowedTools": ["Read", "Glob", "Grep", "Bash(npm ci:*)", "Bash(npm test:*)", "Bash(npm run:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git push:*)", "Bash(gh pr create:*)"]
+    }
+  },
+  "gates": {
+    "coder": "gates/coder.sh",
+    "tester": "gates/tester.sh"
+  }
+}
