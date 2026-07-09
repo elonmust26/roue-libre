@@ -44,6 +44,10 @@ export interface StatusJson {
   last_transition_at: string; // iso8601
   /** Motif si stage === 'blocked'. */
   blocked_reason: AlertType | null;
+  /** Étape depuis laquelle reprendre après un blocked doux (retry). */
+  blocked_from: Stage | null;
+  /** Résumé rédigé par le testeur (affiché en Revue de diff). */
+  tester_summary: string | null;
   sessions: Record<RoleName, string | null>;
   gates: { coder: GateResult | null; tester: GateResult | null };
   history_file: string;
