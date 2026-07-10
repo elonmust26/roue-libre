@@ -9,6 +9,8 @@ import type {
   RoueConfig,
   TaskCreateRequest,
   DiffReview,
+  QueuedTask,
+  CostEstimate,
 } from '../../src/core/types';
 
 /** Appel fetch typé : parse JSON, convertit { error } en exception lisible. */
@@ -92,4 +94,22 @@ export function actionReturn(comment: string): Promise<{ ok: true }> {
 
 export function fetchDiff(): Promise<DiffReview> {
   return request<DiffReview>('/api/diff');
+}
+
+/* ------------------------------ v0.2 ------------------------------ */
+
+export function fetchQueue(): Promise<QueuedTask[]> {
+  return request<QueuedTask[]>('/api/queue');
+}
+
+export function enqueueTask(req: TaskCreateRequest): Promise<QueuedTask[]> {
+  return post<QueuedTask[]>('/api/queue', req);
+}
+
+export function removeQueuedTask(id: string): Promise<QueuedTask[]> {
+  return request<QueuedTask[]>(`/api/queue/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function fetchEstimate(): Promise<CostEstimate> {
+  return request<CostEstimate>('/api/estimate');
 }

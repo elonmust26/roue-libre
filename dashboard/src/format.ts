@@ -51,6 +51,7 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   merge: 'Merge',
   abort: 'Abandon',
   return_to_coder: 'Renvoi au coder',
+  queue: "File d'attente",
 };
 
 /** Horodatage relatif en français : « à l'instant », « il y a 2 min »… */

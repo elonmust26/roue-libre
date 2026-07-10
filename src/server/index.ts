@@ -183,6 +183,63 @@ export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
     }),
   );
 
+  /* ------------------------- v0.2 : file d'attente ------------------------- */
+
+  app.get('/api/queue', (_req, res) => {
+    try {
+      res.json(orchestrator.getQueue());
+    } catch (err) {
+      sendError(res, err, 500);
+    }
+  });
+
+  app.post(
+    '/api/queue',
+    asyncHandler(async (req, res) => {
+      const body = req.body as Partial<TaskCreateRequest> | undefined;
+      if (!body || typeof body !== 'object') {
+        res.status(400).json({ error: 'corps de requête invalide : TaskCreateRequest attendu' });
+        return;
+      }
+      if (typeof body.description !== 'string' || body.description.trim() === '') {
+        res.status(400).json({ error: 'description obligatoire' });
+        return;
+      }
+      if (typeof body.success_criterion !== 'string' || body.success_criterion.trim() === '') {
+        res.status(400).json({ error: 'critère de succès obligatoire — pas de lancement sans définition claire de « fini »' });
+        return;
+      }
+      if (!RISK_LEVELS.includes(body.risk_level as RiskLevel)) {
+        res.status(400).json({ error: 'risk_level invalide (low | medium | high)' });
+        return;
+      }
+      const queue = await orchestrator.enqueueTask({
+        description: body.description,
+        success_criterion: body.success_criterion,
+        risk_level: body.risk_level as RiskLevel,
+        project: typeof body.project === 'string' && body.project.trim() !== '' ? body.project : undefined,
+      });
+      res.json(queue);
+    }),
+  );
+
+  app.delete(
+    '/api/queue/:id',
+    asyncHandler(async (req, res) => {
+      const queue = await orchestrator.removeQueuedTask(req.params.id);
+      res.json(queue);
+    }),
+  );
+
+  /* --------------------- v0.2 : estimation de coût ---------------------- */
+
+  app.get(
+    '/api/estimate',
+    asyncHandler(async (_req, res) => {
+      res.json(await orchestrator.estimateCost());
+    }),
+  );
+
   // Route API inconnue → 404 JSON (avant le fallback statique).
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'route API inconnue' });

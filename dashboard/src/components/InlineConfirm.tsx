@@ -1,6 +1,10 @@
 /**
  * Bouton avec confirmation inline (pas de modale) :
  * 1er clic → affiche la question + Confirmer / Annuler à côté du bouton.
+ *
+ * Règle issue du bug v0.1 « clic sans effet » : un bouton désactivé affiche
+ * sa raison EN CLAIR à côté de lui (pas seulement en info-bulle), et l'action
+ * en cours a un libellé de chargement explicite.
  */
 
 import { useState } from 'react';
@@ -14,11 +18,13 @@ interface Props {
   disabled?: boolean;
   /** Style danger (rouge) au lieu du style primaire. */
   danger?: boolean;
-  /** Info-bulle expliquant pourquoi le bouton est désactivé. */
+  /** Raison affichée à côté du bouton quand il est désactivé. */
   disabledReason?: string;
+  /** Libellé pendant l'exécution de l'action (défaut : « En cours… »). */
+  busyLabel?: string;
 }
 
-export function InlineConfirm({ label, question, onConfirm, disabled, danger, disabledReason }: Props) {
+export function InlineConfirm({ label, question, onConfirm, disabled, danger, disabledReason, busyLabel }: Props) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -42,7 +48,7 @@ export function InlineConfirm({ label, question, onConfirm, disabled, danger, di
           disabled={busy}
           onClick={() => void confirm()}
         >
-          {busy ? '…' : 'Confirmer'}
+          {busy ? (busyLabel ?? 'En cours…') : 'Confirmer'}
         </button>
         <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => setAsking(false)}>
           Annuler
@@ -52,14 +58,18 @@ export function InlineConfirm({ label, question, onConfirm, disabled, danger, di
   }
 
   return (
-    <button
-      type="button"
-      className={danger ? 'btn btn-danger' : 'btn btn-primary'}
-      disabled={disabled}
-      title={disabled && disabledReason ? disabledReason : undefined}
-      onClick={() => setAsking(true)}
-    >
-      {label}
-    </button>
+    <span className="inline-confirm">
+      <button
+        type="button"
+        className={danger ? 'btn btn-danger' : 'btn btn-primary'}
+        disabled={disabled}
+        onClick={() => setAsking(true)}
+      >
+        {label}
+      </button>
+      {disabled && disabledReason && (
+        <span className="inline-confirm-reason" role="note">{disabledReason}</span>
+      )}
+    </span>
   );
 }

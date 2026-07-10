@@ -14,16 +14,21 @@ import {
   EVENTS_FILE,
   LOCAL_CONFIG_FILE,
   ORCH_DIR,
+  QUEUE_FILE,
   SPEC_FILE,
   STATUS_FILE,
+  TASK_HISTORY_FILE,
   TRANSITIONS,
   type AlertType,
+  type CostEstimate,
   type DiffReview,
+  type EffortLevel,
   type EventType,
   type GateRunner,
   type GitOps,
   type OrchestratorApi,
   type OrchestratorEvent,
+  type QueuedTask,
   type RoleName,
   type RoleRunner,
   type RoleRunRequest,
@@ -33,12 +38,32 @@ import {
   type Stage,
   type StatusJson,
   type TaskCreateRequest,
+  type TaskHistoryEntry,
 } from './types.js';
 import { createInitialStatus, assertTransition, sha256File, StatusStore } from './state.js';
 
 /* ------------------------------------------------------------------ */
 /* HeadlessRunner — claude -p en mode stream-json                      */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Mappe le niveau d'effort sur le budget de thinking de la CLI claude
+ * (variable d'environnement MAX_THINKING_TOKENS) :
+ *   low → 0 (réflexion étendue désactivée, économe),
+ *   medium → défaut de la CLI (variable non posée),
+ *   high → budget maximal courant.
+ * Exportée pure pour être testée sans spawn.
+ */
+export function envForEffort(effort: EffortLevel): Record<string, string> {
+  switch (effort) {
+    case 'low':
+      return { MAX_THINKING_TOKENS: '0' };
+    case 'high':
+      return { MAX_THINKING_TOKENS: '31999' };
+    case 'medium':
+      return {};
+  }
+}
 
 export class HeadlessRunner implements RoleRunner {
   private readonly claudeBin: string;
@@ -67,6 +92,7 @@ export class HeadlessRunner implements RoleRunner {
       let costUsd = 0;
       let resultText = '';
       let buffer = '';
+      let stderrTail = '';
       let timedOut = false;
       let settled = false;
       let killTimer: NodeJS.Timeout | null = null;
@@ -84,12 +110,17 @@ export class HeadlessRunner implements RoleRunner {
           resultText,
           exitCode,
           timedOut,
+          stderrTail: stderrTail.trim(),
         });
       };
 
       let child: ReturnType<typeof spawn>;
       try {
-        child = spawn(this.claudeBin, args, { cwd: req.cwd, env: process.env });
+        child = spawn(this.claudeBin, args, {
+          cwd: req.cwd,
+          // Niveau d'effort/réflexion par rôle (v0.2) : budget de thinking via env.
+          env: { ...process.env, ...envForEffort(req.effort) },
+        });
       } catch (err) {
         resolve({
           ok: false,
@@ -98,6 +129,7 @@ export class HeadlessRunner implements RoleRunner {
           resultText: `spawn ${this.claudeBin} impossible : ${(err as Error).message}`,
           exitCode: -1,
           timedOut: false,
+          stderrTail: '',
         });
         return;
       }
@@ -140,7 +172,12 @@ export class HeadlessRunner implements RoleRunner {
           buffer = buffer.slice(idx + 1);
         }
       });
-      child.stderr?.resume(); // drainé pour éviter le blocage du pipe
+      // stderr conservé (fin de flux) : si la CLI refuse un modèle/alias,
+      // l'erreur EXACTE remonte dans role_result — jamais maquillée.
+      child.stderr?.setEncoding('utf8');
+      child.stderr?.on('data', (data: string) => {
+        stderrTail = (stderrTail + data).slice(-4000);
+      });
       child.on('error', () => settle(-1));
       child.on('close', (code) => {
         if (buffer.trim()) handleLine(buffer);
@@ -256,6 +293,12 @@ export class Orchestrator implements OrchestratorApi {
     this.store.save(st);
     this.emitEvent('transition', null, { from, to });
     this.notifyStatus();
+    // v0.2 — tâche close : archive dans l'historique (base de l'estimation de
+    // coût) puis démarre la prochaine tâche de la file, s'il y en a une.
+    if (to === 'merged' || to === 'aborted') {
+      this.recordTaskHistory(st);
+      this.scheduleQueueAdvance();
+    }
   }
 
   /** Étape reprenable correspondant à un stage actif (pour blocked_from). */
@@ -318,6 +361,7 @@ export class Orchestrator implements OrchestratorApi {
       prompt,
       cwd,
       model: roleCfg.model,
+      effort: roleCfg.effort ?? 'medium',
       allowedTools: roleCfg.allowedTools,
       timeoutMs: st.timeout_minutes * 60_000,
       // Pas de --resume entre itérations : anti-dérive de contexte (garde-fou 7),
@@ -339,6 +383,8 @@ export class Orchestrator implements OrchestratorApi {
       timed_out: result.timedOut,
       result_text: result.resultText,
       session_id: result.sessionId,
+      // L'erreur exacte de la CLI (modèle refusé, etc.) — jamais maquillée.
+      stderr: result.stderrTail,
     });
     if (this.status?.stage === 'aborted') return null; // abort pendant le run
     if (result.timedOut) {
@@ -524,8 +570,14 @@ export class Orchestrator implements OrchestratorApi {
   async start(): Promise<void> {
     this.status = this.store.load();
     const st = this.status;
-    if (st && ['spec_locked', 'coding', 'testing'].includes(st.stage)) {
+    // Tous les stages actifs sont reprenables — un serveur tué pendant
+    // gate_coder/gate_tester laissait sinon la tâche figée en silence
+    // (dashboard vivant en apparence, boutons morts : symptôme du bug Phase 1).
+    if (st && ACTIVE_STAGES.has(st.stage)) {
       this.launchCycle();
+    } else {
+      // v0.2 — pas de tâche active : la file d'attente reprend, le cas échéant.
+      this.scheduleQueueAdvance();
     }
   }
 
@@ -683,6 +735,170 @@ export class Orchestrator implements OrchestratorApi {
       candidate && TRANSITIONS.blocked.includes(candidate) ? candidate : 'coding';
     this.transition(to, { blocked_reason: null, blocked_from: null });
     this.launchCycle();
+  }
+
+  /* ------------------------- v0.2 : file d'attente ------------------------- */
+
+  private get queuePath(): string {
+    return path.join(this.opts.repoDir, QUEUE_FILE);
+  }
+
+  private get historyPath(): string {
+    return path.join(this.opts.repoDir, TASK_HISTORY_FILE);
+  }
+
+  private loadQueue(): QueuedTask[] {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.queuePath, 'utf8')) as unknown;
+      return Array.isArray(raw) ? (raw as QueuedTask[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private saveQueue(queue: QueuedTask[]): void {
+    fs.mkdirSync(path.dirname(this.queuePath), { recursive: true });
+    fs.writeFileSync(this.queuePath, JSON.stringify(queue, null, 2));
+  }
+
+  getQueue(): QueuedTask[] {
+    return this.loadQueue();
+  }
+
+  async enqueueTask(req: TaskCreateRequest): Promise<QueuedTask[]> {
+    if (!req.description?.trim()) throw new Error('Description obligatoire.');
+    if (!req.success_criterion?.trim()) throw new Error('Le critère de succès est obligatoire.');
+    const queue = this.loadQueue();
+    const item: QueuedTask = {
+      ...req,
+      description: req.description.trim(),
+      success_criterion: req.success_criterion.trim(),
+      id: randomUUID(),
+      queued_at: new Date().toISOString(),
+    };
+    queue.push(item);
+    this.saveQueue(queue);
+    this.emitEvent('queue', null, { action: 'enqueued', id: item.id, description: item.description, size: queue.length });
+    // Aucune tâche active → la file démarre immédiatement.
+    this.scheduleQueueAdvance();
+    return queue;
+  }
+
+  async removeQueuedTask(id: string): Promise<QueuedTask[]> {
+    const queue = this.loadQueue();
+    const index = queue.findIndex((t) => t.id === id);
+    if (index < 0) throw new Error(`Tâche ${id} absente de la file.`);
+    const [removed] = queue.splice(index, 1);
+    this.saveQueue(queue);
+    this.emitEvent('queue', null, { action: 'removed', id: removed.id, description: removed.description, size: queue.length });
+    return queue;
+  }
+
+  /**
+   * Démarre la prochaine tâche de la file si rien n'est actif.
+   * Asynchrone et non bloquant (appelé depuis transition/enqueue) ; un échec
+   * de démarrage émet une alerte au lieu de rester silencieux.
+   */
+  private scheduleQueueAdvance(): void {
+    setTimeout(() => {
+      void this.advanceQueue().catch((err) => {
+        this.emitEvent('alert', null, {
+          type: 'queue_start_failed',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, 0);
+  }
+
+  private async advanceQueue(): Promise<void> {
+    const stage = this.status?.stage;
+    // On ne démarre JAMAIS par-dessus une tâche active ou un brouillon (idle
+    // = spec en cours de validation sur l'écran Nouvelle tâche).
+    if (stage && stage !== 'merged' && stage !== 'aborted') return;
+    const queue = this.loadQueue();
+    const next = queue.shift();
+    if (!next) return;
+    this.saveQueue(queue);
+    this.emitEvent('queue', null, { action: 'started', id: next.id, description: next.description, size: queue.length });
+    await this.createTask({
+      description: next.description,
+      success_criterion: next.success_criterion,
+      risk_level: next.risk_level,
+      project: next.project,
+    });
+    await this.confirmTask();
+  }
+
+  /* -------------------- v0.2 : historique & estimation -------------------- */
+
+  private loadHistory(): TaskHistoryEntry[] {
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.historyPath, 'utf8')) as unknown;
+      return Array.isArray(raw) ? (raw as TaskHistoryEntry[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private recordTaskHistory(st: StatusJson): void {
+    let specChars = 0;
+    try {
+      specChars = fs.statSync(this.specPath).size;
+    } catch {
+      /* spec absente — entrée quand même archivée */
+    }
+    const entry: TaskHistoryEntry = {
+      task_id: st.task_id,
+      description: st.description,
+      spec_chars: specChars,
+      cost_usd: st.cost_usd_used,
+      final_stage: st.stage,
+      at: new Date().toISOString(),
+    };
+    const history = this.loadHistory();
+    history.push(entry);
+    fs.mkdirSync(path.dirname(this.historyPath), { recursive: true });
+    fs.writeFileSync(this.historyPath, JSON.stringify(history, null, 2));
+  }
+
+  /**
+   * Estimation GROSSIÈRE et assumée comme telle :
+   * - avec historique : coût moyen par caractère de spec des tâches passées
+   *   (les plus proches en taille pèsent naturellement via la moyenne),
+   *   appliqué à la taille de la spec courante ;
+   * - sans historique : heuristique de taille — la spec est réinjectée
+   *   INTÉGRALEMENT à chaque run (garde-fou 7), soit ~6 runs (2 itérations
+   *   moyennes × 3 rôles) × spec en entrée + forfait de sortie.
+   */
+  async estimateCost(): Promise<CostEstimate> {
+    let specChars = 0;
+    try {
+      specChars = fs.statSync(this.specPath).size;
+    } catch {
+      /* pas encore de spec : estimation sur 0 caractère */
+    }
+    const usable = this.loadHistory().filter((h) => h.cost_usd > 0 && h.spec_chars > 0);
+    let estimated: number;
+    let basis: string;
+    if (usable.length > 0) {
+      const costPerChar =
+        usable.reduce((sum, h) => sum + h.cost_usd / h.spec_chars, 0) / usable.length;
+      estimated = Math.max(0.05, costPerChar * Math.max(specChars, 1));
+      basis = `historique local (${usable.length} tâche${usable.length > 1 ? 's' : ''} terminée${usable.length > 1 ? 's' : ''})`;
+    } else {
+      // ~4 caractères/token, 6 runs, ~15 $/Mtoken en entrée + 0,50 $ de sortie forfaitaire.
+      const specTokens = specChars / 4;
+      estimated = Math.max(0.25, (specTokens * 6 * 15) / 1_000_000 + 0.5);
+      basis = 'heuristique de taille de spec (aucun historique local)';
+    }
+    const budget = this.config.budget_usd;
+    return {
+      estimated_usd: Math.round(estimated * 100) / 100,
+      budget_usd: budget,
+      over_budget: estimated > budget,
+      basis,
+      sample_size: usable.length,
+    };
   }
 
   async getDiff(): Promise<DiffReview> {

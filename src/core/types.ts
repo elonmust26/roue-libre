@@ -27,6 +27,9 @@ export type AlertType =
   | 'gate_failed_repeated'
   | 'spec_altered';
 
+/** Niveau d'effort/réflexion par rôle (v0.2) — mappe sur le budget de thinking de la CLI. */
+export type EffortLevel = 'low' | 'medium' | 'high';
+
 /** status.json — écrit UNIQUEMENT par le moteur, atomiquement (tmp + rename). */
 export interface StatusJson {
   task_id: string;
@@ -82,7 +85,9 @@ export type EventType =
   | 'alert'
   | 'merge'
   | 'abort'
-  | 'return_to_coder';
+  | 'return_to_coder'
+  /** v0.2 — file d'attente : ajout / retrait / démarrage automatique d'une tâche empilée. */
+  | 'queue';
 
 /** Événement appendé dans events.ndjson et poussé en WS (source de la Timeline). */
 export interface OrchestratorEvent {
@@ -104,6 +109,8 @@ export interface RoleRunRequest {
   /** Répertoire de travail (worktree du rôle). */
   cwd: string;
   model: string;
+  /** Niveau d'effort/réflexion (v0.2) — budget de thinking de la CLI. */
+  effort: EffortLevel;
   allowedTools: string[];
   timeoutMs: number;
   /** session à reprendre (--resume), sinon null. */
@@ -117,6 +124,8 @@ export interface RoleRunResult {
   resultText: string;
   exitCode: number;
   timedOut: boolean;
+  /** Fin du flux stderr de la CLI (v0.2) — l'erreur EXACTE, jamais maquillée. */
+  stderrTail: string;
 }
 
 /** Chunk NDJSON relayé en temps réel (stream-json de claude -p, ou stub simulé). */
@@ -141,6 +150,8 @@ export interface GateRunner {
 
 export interface RoleConfig {
   model: string;
+  /** Niveau d'effort/réflexion (v0.2). Absent (configs v0.1) → 'medium'. */
+  effort?: EffortLevel;
   allowedTools: string[];
 }
 
@@ -164,14 +175,17 @@ export const DEFAULT_CONFIG: RoueConfig = {
   roles: {
     prompteur: {
       model: 'claude-fable-5',
+      effort: 'medium',
       allowedTools: ['Read', 'Glob', 'Grep'],
     },
     coder: {
       model: 'claude-fable-5',
+      effort: 'medium',
       allowedTools: ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(npm run:*)', 'Bash(npm test:*)'],
     },
     testeur: {
       model: 'claude-fable-5',
+      effort: 'medium',
       allowedTools: ['Read', 'Glob', 'Grep', 'Bash(npm ci:*)', 'Bash(npm test:*)', 'Bash(npm run:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git push:*)', 'Bash(gh pr create:*)'],
     },
   },
@@ -202,6 +216,10 @@ export const EVENTS_FILE = '.orchestration/events.ndjson';
 export const SPEC_FILE = '.orchestration/spec.md';
 export const LOCAL_CONFIG_FILE = '.orchestration/config.json';
 export const WORKTREES_DIR = '.orchestration/worktrees';
+/** v0.2 — file d'attente de tâches (exécution séquentielle). */
+export const QUEUE_FILE = '.orchestration/queue.json';
+/** v0.2 — historique des tâches terminées (base de l'estimation de coût). */
+export const TASK_HISTORY_FILE = '.orchestration/task-history.json';
 
 /* ------------------------------------------------------------------ */
 /* Opérations git — stubbées en mode --simulate                        */
@@ -244,6 +262,15 @@ export interface OrchestratorApi {
   /** Depuis blocked : relance depuis l'étape bloquée. */
   retry(): Promise<void>;
   getDiff(): Promise<DiffReview>;
+  /* --------------------------- v0.2 --------------------------- */
+  /** File d'attente : lecture. */
+  getQueue(): QueuedTask[];
+  /** Empile une tâche ; démarre immédiatement si aucune tâche active. */
+  enqueueTask(req: TaskCreateRequest): Promise<QueuedTask[]>;
+  /** Retire une tâche non encore démarrée de la file. */
+  removeQueuedTask(id: string): Promise<QueuedTask[]>;
+  /** Estimation de coût pour la spec courante (taille + historique). */
+  estimateCost(): Promise<CostEstimate>;
   /** Abonnements temps réel (retournent une fonction de désabonnement). */
   onEvent(listener: (e: OrchestratorEvent) => void): () => void;
   onStatus(listener: (s: StatusJson | null) => void): () => void;
@@ -272,12 +299,41 @@ export interface ServerHandle {
 /** POST /api/actions/merge | /api/actions/abort | /api/actions/retry */
 /** POST /api/actions/return (body: { comment: string }) */
 /** GET /api/diff → DiffReview */
+/** v0.2 : GET /api/queue → QueuedTask[] ; POST /api/queue (body: TaskCreateRequest) → QueuedTask[] */
+/** v0.2 : DELETE /api/queue/:id → QueuedTask[] ; GET /api/estimate → CostEstimate */
 
 export interface TaskCreateRequest {
   description: string;
   success_criterion: string;
   risk_level: RiskLevel;
   project?: string;
+}
+
+/** v0.2 — tâche empilée dans la file d'attente (queue.json). */
+export interface QueuedTask extends TaskCreateRequest {
+  id: string;
+  queued_at: string; // iso8601
+}
+
+/** v0.2 — entrée d'historique de tâche terminée (task-history.json). */
+export interface TaskHistoryEntry {
+  task_id: string;
+  description: string;
+  /** Taille de la spec figée (caractères) — base de la similarité. */
+  spec_chars: number;
+  cost_usd: number;
+  final_stage: Stage;
+  at: string; // iso8601
+}
+
+/** v0.2 — estimation de coût avant lancement réel (dry-run). */
+export interface CostEstimate {
+  estimated_usd: number;
+  budget_usd: number;
+  over_budget: boolean;
+  /** D'où vient l'estimation : historique (n tâches) ou heuristique de taille. */
+  basis: string;
+  sample_size: number;
 }
 
 export interface DiffReview {

@@ -114,6 +114,7 @@ export class SimulatedRunner implements RoleRunner {
       resultText,
       exitCode: 0,
       timedOut: false,
+      stderrTail: '',
     };
   }
 
