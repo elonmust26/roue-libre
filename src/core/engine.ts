@@ -524,7 +524,10 @@ export class Orchestrator implements OrchestratorApi {
   async start(): Promise<void> {
     this.status = this.store.load();
     const st = this.status;
-    if (st && ['spec_locked', 'coding', 'testing'].includes(st.stage)) {
+    // Tous les stages actifs sont reprenables — un serveur tué pendant
+    // gate_coder/gate_tester laissait sinon la tâche figée en silence
+    // (dashboard vivant en apparence, boutons morts : symptôme du bug Phase 1).
+    if (st && ACTIVE_STAGES.has(st.stage)) {
       this.launchCycle();
     }
   }
