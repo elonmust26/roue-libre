@@ -31,6 +31,7 @@ import { assertTransition, createInitialStatus, sha256File, StatusStore } from '
 import { ShellGateRunner } from './core/gates.js';
 import { HeadlessRunner, Orchestrator } from './core/engine.js';
 import { RealGitOps } from './core/git.js';
+import { checkCliVersion, TESTED_CLI_VERSION } from './core/cliversion.js';
 
 /** Racine du package : dist/cli.js → dossier parent de dist/. */
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -315,6 +316,15 @@ async function cmdStart(args: string[]): Promise<void> {
     gates = new sim.SimulatedGateRunner();
     git = new sim.SimulatedGitOps();
   } else {
+    // v0.2 — vérification de version CLI : avertit sans bloquer si la version
+    // installée s'éloigne de celle testée en dev (format stream-json).
+    const check = checkCliVersion();
+    if (check.detected) {
+      console.log(`CLI claude : ${check.detected} (testée en dev : ${TESTED_CLI_VERSION})`);
+    }
+    if (check.warning) {
+      console.warn(`⚠ ${check.warning}`);
+    }
     runner = new HeadlessRunner();
     gates = new ShellGateRunner({ packageRoot, scripts: config.gates, env: {} });
     const existing = new StatusStore(path.join(repoDir, STATUS_FILE)).load();
