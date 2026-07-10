@@ -533,8 +533,14 @@ pre.detail-pre {
 
 .role-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, 1fr) : le contenu monospace des consoles live ne doit jamais
+     forcer la grille à déborder du conteneur. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--s4);
+}
+
+.role-grid > * {
+  min-width: 0;
 }
 
 @media (max-width: 860px) {
@@ -1084,4 +1090,286 @@ pre.diff-view {
 .context-row dd {
   margin: 0;
   font-size: 13px;
+}
+
+/* --------------------------------------------------------------------------
+   v0.2 — états visuels (icône + couleur), console live, presets,
+   file d'attente, estimation de coût
+   -------------------------------------------------------------------------- */
+
+/* Icône d'état du bandeau global : couleur + symbole, jamais seulement du texte. */
+.state-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.state-icon-idle,
+.state-icon-aborted {
+  color: var(--text-2);
+  background: rgba(138, 147, 166, 0.15);
+}
+
+.state-icon-running {
+  color: var(--accent);
+  background: rgba(79, 140, 255, 0.15);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.state-icon-blocked {
+  color: var(--danger);
+  background: rgba(229, 83, 75, 0.15);
+}
+
+.state-icon-done {
+  color: var(--ok);
+  background: rgba(63, 185, 112, 0.15);
+}
+
+/* Cartes rôle : liseré + badge par état (idle / en cours / bloqué / terminé). */
+.role-running {
+  border-color: rgba(79, 140, 255, 0.6);
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.25);
+}
+
+.role-blocked {
+  border-color: rgba(229, 83, 75, 0.6);
+  box-shadow: 0 0 0 1px rgba(229, 83, 75, 0.25);
+}
+
+.role-done {
+  border-color: rgba(63, 185, 112, 0.45);
+}
+
+.role-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.role-status-icon {
+  font-size: 12px;
+}
+
+.role-status-running {
+  color: var(--accent);
+}
+
+.role-status-blocked {
+  color: var(--danger);
+}
+
+.role-status-done {
+  color: var(--ok);
+}
+
+/* Console live par rôle : mini-terminal lecture seule, monospace,
+   défilement auto, couleur par type de ligne. */
+.role-console-toggle {
+  margin-top: var(--s3);
+  align-self: flex-start;
+}
+
+.role-console {
+  margin-top: var(--s2);
+  background: #070a10;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--s2) var(--s3);
+  height: 220px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-line {
+  display: block;
+}
+
+.console-cmd {
+  color: var(--accent);
+}
+
+.console-sys {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.console-out {
+  color: #c9d1e0;
+}
+
+.console-result {
+  color: var(--ok);
+}
+
+.console-gate-ok {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.console-gate-ko {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.console-err {
+  color: #f0a49f;
+}
+
+/* Préréglages un-clic (Éco / Standard / Max). */
+.preset-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s3);
+}
+
+@media (max-width: 700px) {
+  .preset-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.preset-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.preset-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.preset-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.preset-eco:hover:not(:disabled) {
+  border-color: rgba(63, 185, 112, 0.6);
+}
+
+.preset-standard:hover:not(:disabled) {
+  border-color: rgba(79, 140, 255, 0.6);
+}
+
+.preset-max:hover:not(:disabled) {
+  border-color: rgba(217, 160, 63, 0.6);
+}
+
+.preset-label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.preset-eco .preset-label {
+  color: var(--ok);
+}
+
+.preset-standard .preset-label {
+  color: var(--accent);
+}
+
+.preset-max .preset-label {
+  color: var(--warn);
+}
+
+.preset-hint {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.custom-model-input {
+  margin-top: var(--s2);
+}
+
+/* File d'attente de tâches. */
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.queue-pos {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(79, 140, 255, 0.15);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.queue-desc {
+  flex: 1;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.queue-meta {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+/* Estimation de coût avant lancement (dry-run). */
+.estimate-box {
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  margin: var(--s3) 0;
+  padding: var(--s3) var(--s4);
+  border-radius: var(--radius);
+  border: 1px solid rgba(79, 140, 255, 0.4);
+  background: rgba(79, 140, 255, 0.08);
+  font-size: 13px;
+}
+
+.estimate-box.estimate-over {
+  border-color: rgba(217, 160, 63, 0.55);
+  background: rgba(217, 160, 63, 0.1);
+}
+
+.estimate-icon {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.estimate-over .estimate-icon {
+  color: var(--warn);
 }

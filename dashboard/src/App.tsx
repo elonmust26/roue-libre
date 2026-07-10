@@ -3,8 +3,9 @@
  * L'onglet Alerte n'est actif que si le pipeline est bloqué (badge rouge).
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useOrchestrator } from './ws';
+import { notifyStageChange } from './notify';
 import { Dashboard } from './screens/Dashboard';
 import { NewTask } from './screens/NewTask';
 import { Timeline } from './screens/Timeline';
@@ -28,6 +29,19 @@ export default function App() {
   const [tab, setTab] = useState<TabId>('dashboard');
 
   const blocked = status?.stage === 'blocked';
+
+  // v0.2 — notification locale quand une tâche ATTEINT review ou blocked
+  // (transition détectée côté client, jamais au simple rechargement de page).
+  const prevStage = useRef(status?.stage);
+  useEffect(() => {
+    const stage = status?.stage;
+    const prev = prevStage.current;
+    prevStage.current = stage;
+    if (prev === undefined || stage === prev) return;
+    if (stage === 'review' || stage === 'blocked') {
+      notifyStageChange(stage, status?.project ?? 'tâche');
+    }
+  }, [status?.stage, status?.project]);
 
   return (
     <div className="app">
