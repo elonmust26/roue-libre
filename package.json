@@ -1,6 +1,6 @@
 {
   "name": "roue-libre",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Orchestrateur local multi-Claude Code : Prompteur / Coder / Testeur-Merge, piloté par gates objectives, avec dashboard temps réel.",
   "license": "MIT",
   "type": "module",
